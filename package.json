@@ -1,0 +1,36 @@
+{
+  "name": "semantic_memory",
+  "version": "0.1.0",
+  "description": "Long-term memory extension for the Pi coding agent: .md notes + embeddings + cosine search",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-tui": "1.3.0",
+    "@types/node": "^26.6.5",
+    "eslint": "^9.39.5",
+    "tsx": "^4.23.15",
+    "typebox": "1.3.27",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check-goal": "tsx scripts/check-goal.ts"
+  }
+}
