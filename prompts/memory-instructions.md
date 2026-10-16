@@ -24,6 +24,9 @@ details, not conversation ephemera. Good candidates:
   - update the most relevant note with `update_memory`, or
   - call `save_memory(content, tags, allowNew: true)` only when the new content
     is a genuinely distinct fact, not a rewording or contradiction.
+- If `save_memory` reports a duplicate but the existing note does not actually
+  say the same thing as your new content (the fact has changed), call
+  `update_memory` on that path instead of treating it as saved.
 
 ## How to save
 

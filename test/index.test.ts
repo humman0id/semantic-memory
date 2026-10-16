@@ -5,7 +5,9 @@ import { join } from "node:path";
 import {
   createMemoryToolCore,
   createRetrievalController,
+  DUPLICATE_INSTRUCTION,
   readInstructions,
+  renderSaveResult,
 } from "../src/index.js";
 import type { Embedder } from "../src/embed.js";
 import { listMemories, readIndex, readNote, readQueue, writeMemory } from "../src/store.js";
@@ -142,7 +144,7 @@ describe("createMemoryToolCore", () => {
 });
 
 describe("save_memory dedupe", () => {
-  it("returns duplicate for near-identical content and writes one file", async () => {
+  it("returns duplicate with path/score/preview and writes one file", async () => {
     const embedder = mapEmbedder({
       "tabs over spaces": [1, 0],
       "tabs rather than spaces": [0.99, 0.1],
@@ -155,7 +157,35 @@ describe("save_memory dedupe", () => {
     expect(a.status).toBe("saved");
     expect(b.status).toBe("duplicate");
     expect(b.filePath).toBe(a.filePath);
+    expect(typeof b.score).toBe("number");
+    expect(b.preview).toContain("tabs over spaces");
     expect(listMemories()).toHaveLength(1);
+
+    // not byte-identical -> must NOT refresh updated
+    expect(readNote(a.filePath!)!.updated).toBeUndefined();
+  });
+
+  it("touches updated only when the content is identical", async () => {
+    const embedder = mapEmbedder({ "same fact": [1, 0] });
+    const core = createMemoryToolCore({ embedder, dupScore: 0.9, similarScore: 0.6 });
+
+    const a = await core.saveMemory("same fact", []);
+    const b = await core.saveMemory("same fact", []);
+
+    expect(b.status).toBe("duplicate");
+    expect(readNote(a.filePath!)!.updated).toBeDefined();
+  });
+
+  it("renders the update_memory instruction on a duplicate", async () => {
+    const embedder = mapEmbedder({ fact: [1, 0] });
+    const core = createMemoryToolCore({ embedder, dupScore: 0.9, similarScore: 0.6 });
+
+    await core.saveMemory("fact", []);
+    const b = await core.saveMemory("fact", []);
+    const text = renderSaveResult(b);
+
+    expect(text).toContain(b.filePath!);
+    expect(text).toContain(DUPLICATE_INSTRUCTION);
   });
 
   it("returns candidates for similar content and writes nothing unless allowNew", async () => {

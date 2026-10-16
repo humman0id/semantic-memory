@@ -24,6 +24,11 @@ const DUPLICATES: Pair[] = [
   ["The project uses Vitest as its test runner.", "Unit tests in this project are run with Vitest."],
   ["Deployment targets a single Node.js server.", "The app is deployed to one Node server."],
   ["The user's preferred package manager is pnpm.", "For package management, the user chooses pnpm."],
+  ["The build command is npm run build.", "Run npm run build to compile the project."],
+  ["The database is PostgreSQL.", "The project stores data in Postgres."],
+  ["CI runs on GitHub Actions.", "GitHub Actions is the CI platform used here."],
+  ["The server listens on port 3000.", "Port 3000 is where the server listens."],
+  ["The user prefers two-space indentation in JSON.", "JSON files use two spaces for indentation."],
 ];
 
 const SAME_TOPIC: Pair[] = [
@@ -31,6 +36,11 @@ const SAME_TOPIC: Pair[] = [
   ["Deployment targets a single Node.js server.", "Deployment targets a serverless platform."],
   ["The user prefers tabs for indentation.", "The user prefers four spaces for indentation."],
   ["The project uses Vitest for testing.", "The project uses Jest for testing."],
+  ["Linting is done with ESLint.", "Linting is done with Biome."],
+  ["The backend is written in TypeScript.", "The backend is written in Go."],
+  ["The frontend uses React.", "The frontend uses Vue."],
+  ["The user prefers dark mode.", "The user prefers light mode."],
+  ["The rate limit is 100 requests per minute.", "The rate limit is 500 requests per minute."],
 ];
 
 const UNRELATED: Pair[] = [
@@ -53,6 +63,8 @@ const QUERY_NOTE_IRRELEVANT: Pair[] = [
   ["What's the capital of France?", "Deployment targets a single Node.js server."],
   ["Recommend a good hiking trail.", "The user's preferred package manager is pnpm."],
 ];
+
+const DUP_MARGIN = 0.03;
 
 function stats(scores: number[]): { min: number; max: number; mean: number; median: number } {
   const sorted = [...scores].sort((a, b) => a - b);
@@ -107,28 +119,23 @@ async function main(): Promise<void> {
     return s;
   };
 
-  const dupS = report("note/note — true duplicates (reworded)", dup);
+  report("note/note — true duplicates (reworded)", dup);
   const sameS = report("note/note — same topic, different/contradicting fact", same);
   const unrelS = report("note/note — unrelated", unrel);
   const relS = report("query/note — relevant first message", rel);
   const irrelS = report("query/note — irrelevant first message", irrel);
 
-  // Proposals: prefer the midpoint of the gap between adjacent classes (a margin
-  // away from both). When note/note duplicate and same-topic classes overlap,
-  // DUP_SCORE is pushed ABOVE the same-topic max so the auto-dedupe path only
-  // fires on near-verbatim text; the ambiguous band is handled by the similar
-  // path (candidates + model decision) to avoid silently dropping contradictions.
-  const overlap = dupS.min <= sameS.max;
-  const dupScore = overlap ? Math.min(0.99, round2(sameS.max + 0.01)) : round2(sameS.max + (dupS.min - sameS.max) * 0.5);
+  // DUP_SCORE must sit clearly ABOVE every same-topic/contradiction pair, so a
+  // contradiction is never auto-deduped as a "duplicate". SIMILAR/MIN are the
+  // midpoints of the clean gaps between adjacent classes.
+  const maxChange = sameS.max;
+  const dupScore = Math.min(0.99, round2(maxChange + DUP_MARGIN));
   const similarScore = sameS.min > unrelS.max ? round2(unrelS.max + (sameS.min - unrelS.max) * 0.5) : round2(unrelS.max);
   const minScore = relS.min > irrelS.max ? round2(irrelS.max + (relS.min - irrelS.max) * 0.5) : round2(irrelS.max);
 
-  if (overlap) {
-    console.log(`\n  ⚠ note/note duplicate and same-topic classes OVERLAP (dup.min=${dupS.min.toFixed(3)} <= same-topic.max=${sameS.max.toFixed(3)}).`);
-    console.log(`    DUP_SCORE set above same-topic max: only near-verbatim text auto-dedupes.`);
-  }
-
-  console.log(`\n## Proposed defaults (embedding model: embeddinggemma)`);
+  console.log(`\n## Calibration summary (embedding model: embeddinggemma)`);
+  console.log(`  max change/contradiction score: ${maxChange.toFixed(3)}`);
+  console.log(`  chosen DUP margin: ${DUP_MARGIN}`);
   console.log(`  SEMANTIC_MEMORY_DUP_SCORE=${dupScore}`);
   console.log(`  SEMANTIC_MEMORY_SIMILAR_SCORE=${similarScore}`);
   console.log(`  SEMANTIC_MEMORY_MIN_SCORE=${minScore}`);

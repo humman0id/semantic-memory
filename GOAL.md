@@ -35,6 +35,10 @@ local embeddings (`embeddinggemma` via Ollama), and cosine-similarity search.
 13. With Ollama down, `save_memory` still writes and queues without crashing;
     processing the queue later records possible duplicates in
     `.possible-dupes.json` instead of deleting anything.
+14. The duplicate result includes path, score, preview, and the `update_memory`
+    instruction; covered by tests.
+15. `DUP_SCORE` exceeds the maximum score of every change/contradiction pair in
+    the calibration set by a recorded margin.
 
 ## Out of scope (MVP)
 

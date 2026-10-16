@@ -32,6 +32,8 @@ type IndexModule = {
     previewLength?: number;
     minScore?: number;
   }): RetrievalController;
+  renderSaveResult(res: SaveMemoryToolResult): string;
+  DUPLICATE_INSTRUCTION: string;
 };
 type EmbedModule = {
   createOllamaEmbedder(options?: OllamaEmbedderOptions): Embedder;
@@ -423,12 +425,12 @@ async function check12(): Promise<CheckResult> {
   const hasScript = existsSync(path.join(ROOT, "scripts", "calibrate-thresholds.ts"));
   const hasDecisions =
     decisions.includes("embeddinggemma") &&
-    decisions.includes("0.95") &&
-    decisions.includes("0.62") &&
+    decisions.includes("0.97") &&
+    decisions.includes("0.59") &&
     decisions.includes("0.44");
   const defaultsMatch =
-    indexSrc.includes('envFloat("SEMANTIC_MEMORY_DUP_SCORE", 0.95)') &&
-    indexSrc.includes('envFloat("SEMANTIC_MEMORY_SIMILAR_SCORE", 0.62)') &&
+    indexSrc.includes('envFloat("SEMANTIC_MEMORY_DUP_SCORE", 0.97)') &&
+    indexSrc.includes('envFloat("SEMANTIC_MEMORY_SIMILAR_SCORE", 0.59)') &&
     indexSrc.includes('envFloat("SEMANTIC_MEMORY_MIN_SCORE", 0.44)');
   const ok = hasScript && hasDecisions && defaultsMatch;
   return {
@@ -473,8 +475,62 @@ async function check13(): Promise<CheckResult> {
   }
 }
 
+// ---------------------------------------------------------------- criterion 14
+async function check14(): Promise<CheckResult> {
+  const dir = newTempDir();
+  try {
+    const { createMemoryToolCore, renderSaveResult, DUPLICATE_INSTRUCTION } = await importSrc<IndexModule>("index.ts");
+    const { readNote } = await importSrc<StoreModule>("store.ts");
+    const fake = mapEmbedder({ fact: [1, 0], "fact reworded": [0.99, 0.1] });
+    const core = createMemoryToolCore({ embedder: fake, dupScore: 0.9, similarScore: 0.6 });
+
+    const a = await core.saveMemory("fact", []);
+    const b = await core.saveMemory("fact reworded", []);
+
+    const shapeOk =
+      b.status === "duplicate" &&
+      b.filePath === a.filePath &&
+      typeof b.score === "number" &&
+      typeof b.preview === "string" &&
+      (b.preview?.length ?? 0) > 0;
+    const text = renderSaveResult(b);
+    const instructionOk = text.includes(b.filePath ?? "") && text.includes(DUPLICATE_INSTRUCTION);
+    const noTouchOk = readNote(a.filePath ?? "")?.updated === undefined;
+
+    const ok = shapeOk && instructionOk && noTouchOk;
+    return {
+      criterion: "14. duplicate result includes path/score/preview + update_memory instruction",
+      ok,
+      details: `shapeOk=${shapeOk} instructionOk=${instructionOk} noTouchOk=${noTouchOk}\n${text}`,
+    };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// ---------------------------------------------------------------- criterion 15
+async function check15(): Promise<CheckResult> {
+  const decisions = readFileSync(path.join(ROOT, "docs", "decisions.md"), "utf8");
+  const indexSrc = readFileSync(path.join(ROOT, "src", "index.ts"), "utf8");
+
+  const maxChange = /max change\/contradiction score \(([\d.]+)\)/i.exec(decisions)?.[1];
+  const margin = /recorded margin \(([\d.]+)\)/.exec(decisions)?.[1];
+  const dup = /`SEMANTIC_MEMORY_DUP_SCORE`\s*\|\s*`([\d.]+)`/.exec(decisions)?.[1];
+  const indexDup = /envFloat\("SEMANTIC_MEMORY_DUP_SCORE",\s*([\d.]+)\)/.exec(indexSrc)?.[1];
+
+  const parsed = [maxChange, margin, dup, indexDup].every((v) => v !== undefined);
+  const marginOk = parsed && Number(dup) >= Number(maxChange) + Number(margin) - 0.005;
+  const codeMatch = parsed && dup === indexDup;
+  const ok = parsed && marginOk && codeMatch;
+  return {
+    criterion: "15. DUP_SCORE exceeds max change/contradiction score by recorded margin",
+    ok,
+    details: `maxChange=${maxChange} margin=${margin} dup=${dup} indexDup=${indexDup} marginOk=${marginOk} codeMatch=${codeMatch}`,
+  };
+}
+
 async function main(): Promise<void> {
-  const factories = [check1, check2, check3, check4, check5, check6, check7, check8, check9, check10, check11, check12, check13];
+  const factories = [check1, check2, check3, check4, check5, check6, check7, check8, check9, check10, check11, check12, check13, check14, check15];
   const checks: CheckResult[] = [];
   for (const f of factories) {
     try {

@@ -318,6 +318,7 @@ export interface SaveMemoryToolResult {
   indexed: boolean;
   queued: boolean;
   score?: number;               // top note-to-note cosine (duplicate/similar)
+  preview?: string;             // existing note's body preview (duplicate)
   candidates?: SaveCandidate[]; // 1-3, for "similar"
 }
 
@@ -350,8 +351,8 @@ export interface MemoryToolCoreDeps {
   embedder: Embedder;
   topK?: number;            // default 5
   previewLength?: number;   // default 200
-  dupScore?: number;        // default env SEMANTIC_MEMORY_DUP_SCORE or 0.95
-  similarScore?: number;    // default env SEMANTIC_MEMORY_SIMILAR_SCORE or 0.62
+  dupScore?: number;        // default env SEMANTIC_MEMORY_DUP_SCORE or 0.97
+  similarScore?: number;    // default env SEMANTIC_MEMORY_SIMILAR_SCORE or 0.59
   minScore?: number;        // default env SEMANTIC_MEMORY_MIN_SCORE or 0.44
 }
 
@@ -377,8 +378,8 @@ Env vars (read at call time; defaults from `docs/decisions.md`):
 
 | Var | Default | Use |
 |---|---|---|
-| `SEMANTIC_MEMORY_DUP_SCORE` | `0.95` | note→note: at/above => duplicate |
-| `SEMANTIC_MEMORY_SIMILAR_SCORE` | `0.62` | note→note: at/above => similar |
+| `SEMANTIC_MEMORY_DUP_SCORE` | `0.97` | note→note: at/above => duplicate |
+| `SEMANTIC_MEMORY_SIMILAR_SCORE` | `0.59` | note→note: at/above => similar |
 | `SEMANTIC_MEMORY_MIN_SCORE` | `0.44` | query→note: injection floor |
 
 1. **System prompt** — on `before_agent_start`, inject the contents of
@@ -394,8 +395,11 @@ Env vars (read at call time; defaults from `docs/decisions.md`):
       `enqueueForIndexing` and return
       `{status:"queued", filePath, indexed:false, queued:true}`.
    2. `top = searchVector(vector, 1, readIndex())[0]`.
-   3. If `top && top.score >= dupScore` → `touchUpdated(top.filePath)` and return
-      `{status:"duplicate", filePath:top.filePath, score, indexed:false, queued:false}`.
+   3. If `top && top.score >= dupScore` → return
+      `{status:"duplicate", filePath:top.filePath, score, preview, indexed:false, queued:false}`
+      and render the `update_memory` instruction alongside the preview. Refresh
+      `updated` (`touchUpdated`) only when the new content is byte-identical to
+      the existing note's body; a merely-similar match must not touch it.
    4. Else if `top && top.score >= similarScore && !allowNew` → return
       `{status:"similar", score, candidates: top 1-3 (path/score/preview), indexed:false, queued:false}`.
    5. Else `writeMemory` + `indexNote`, return

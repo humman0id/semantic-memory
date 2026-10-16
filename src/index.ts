@@ -20,6 +20,7 @@ import {
   dequeueAll,
   enqueueForIndexing,
   filesNeedingIndex,
+  hashText,
   indexNote,
   listMemories,
   readIndex,
@@ -49,6 +50,7 @@ export interface SaveMemoryToolResult {
   indexed: boolean;
   queued: boolean;
   score?: number;
+  preview?: string;
   candidates?: SaveCandidate[];
 }
 
@@ -90,6 +92,9 @@ export interface MemoryToolCore {
 
 const RETRIEVAL_HEADER =
   "Relevant long-term memory (open with the `read` tool when needed):";
+
+export const DUPLICATE_INSTRUCTION =
+  "If this note does not already say the same thing as your new content (for example the fact has changed), call update_memory on this path instead.";
 
 function envFloat(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -161,8 +166,8 @@ export function createRetrievalController(deps: {
 export function createMemoryToolCore(deps: MemoryToolCoreDeps): MemoryToolCore {
   const { embedder } = deps;
   const previewLength = deps.previewLength ?? 200;
-  const dupScore = deps.dupScore ?? envFloat("SEMANTIC_MEMORY_DUP_SCORE", 0.95);
-  const similarScore = deps.similarScore ?? envFloat("SEMANTIC_MEMORY_SIMILAR_SCORE", 0.62);
+  const dupScore = deps.dupScore ?? envFloat("SEMANTIC_MEMORY_DUP_SCORE", 0.97);
+  const similarScore = deps.similarScore ?? envFloat("SEMANTIC_MEMORY_SIMILAR_SCORE", 0.59);
   const withLock = createMutex();
 
   function previewOf(filePath: string): string {
@@ -196,8 +201,18 @@ export function createMemoryToolCore(deps: MemoryToolCoreDeps): MemoryToolCore {
         const top = searchVector(vector, 1, index)[0];
 
         if (top !== undefined && top.score >= dupScore) {
-          touchUpdated(top.filePath);
-          return { status: "duplicate", filePath: top.filePath, score: top.score, indexed: false, queued: false };
+          const existing = readNote(top.filePath);
+          if (existing !== undefined && hashText(existing.content) === hashText(content)) {
+            touchUpdated(top.filePath);
+          }
+          return {
+            status: "duplicate",
+            filePath: top.filePath,
+            score: top.score,
+            preview: previewOf(top.filePath),
+            indexed: false,
+            queued: false,
+          };
         }
 
         if (top !== undefined && top.score >= similarScore && !allowNew) {
@@ -348,14 +363,14 @@ export function readInstructions(): string {
   return fallback;
 }
 
-function renderSaveResult(res: SaveMemoryToolResult): string {
+export function renderSaveResult(res: SaveMemoryToolResult): string {
   switch (res.status) {
     case "saved":
       return `Saved memory note ${res.filePath}`;
     case "queued":
       return `Saved memory note ${res.filePath} (queued for indexing — embeddings unavailable)`;
     case "duplicate":
-      return `Duplicate of existing note ${res.filePath} (score ${res.score?.toFixed(3)}). Updated its timestamp.`;
+      return `Duplicate of existing note ${res.filePath} (score ${res.score?.toFixed(3)}): ${res.preview ?? ""}\n${DUPLICATE_INSTRUCTION}`;
     case "similar": {
       const lines = [
         `Not saved: ${res.candidates?.length ?? 0} similar note(s) exist (top score ${res.score?.toFixed(3)}). Update one of these with update_memory, or call save_memory again with allowNew:true if this is a genuinely distinct fact.`,

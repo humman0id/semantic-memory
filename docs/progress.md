@@ -107,3 +107,34 @@ are no longer present). Script did not modify anything.
 ## Done
 
 - `npx tsx scripts/check-goal.ts` exits 0 (13/13).
+
+---
+
+# Feature 3 — DUP_SCORE margin + duplicate result shape
+
+New criteria appended to GOAL.md as 14–15 (renumbered from 17–18 per
+orchestrator/user clarification; existing 1–13 untouched). Goals:
+
+- Duplicate result includes path, score, preview, and an `update_memory`
+  instruction; `updated` is refreshed only when content is byte-identical.
+- Raise `DUP_SCORE` clearly above the max change/contradiction score.
+
+## Iterations
+
+- **Iteration 1** — Expanded the calibration set (+5 reworded duplicates,
+  +5 change/contradiction pairs: tool/language/framework/preference/numeric),
+  re-ran `calibrate-thresholds.ts`, recorded new distributions + 0.03 margin.
+  New defaults: DUP=0.97, SIMILAR=0.59, MIN=0.44. Updated `index.ts` (preview +
+  `DUPLICATE_INSTRUCTION` + conditional `touchUpdated`), contracts, README,
+  prompts, tests, and `check-goal.ts` (14–15). Fixed two check regressions
+  (regex case + stray brace). Final: **15/15, exit 0**.
+
+## Calibration result (updated)
+
+`embeddinggemma`: max change/contradiction score 0.944 (npm vs pnpm) →
+DUP = 0.944 + 0.03 margin = 0.97. SIMILAR=0.59, MIN=0.44. Recorded in
+`docs/decisions.md`.
+
+## Done
+
+- `npx tsx scripts/check-goal.ts` exits 0 (15/15). Not pushed (per instruction).
