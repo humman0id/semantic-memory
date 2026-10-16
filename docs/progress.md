@@ -45,8 +45,21 @@ Log of iterations toward the GOAL. Orchestrator-only file.
 
 ### hooks-agent
 
-- (pending)
+- (done) implemented `src/index.ts` (retrieval controller, memory-tool core,
+  instruction loading, Pi tool/event wiring) and `test/index.test.ts` (6 tests).
+  `prompts/memory-instructions.md` already accurate, left unchanged.
+
+### Integration (orchestrator)
+
+- `tsc --noEmit`, `eslint .`, and `vitest run` (41/41) all green.
+- `scripts/check-goal.ts` exits 0: 7/7 criteria. Pulled `embeddinggemma`
+  (621 MB) so criterion 4 runs against real Ollama instead of skipping.
 
 ## Loop iterations
 
-- (none yet)
+- Iteration 1 (single pass): after subagents, check-goal exited 0 on first
+  run. No failing criteria to fix.
+
+## Done
+
+- `npx tsx scripts/check-goal.ts` exits 0 (7/7).
