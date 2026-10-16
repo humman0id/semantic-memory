@@ -6,8 +6,6 @@
  * Usage: npx tsx scripts/find-duplicates.ts [memoryDir]
  * Defaults to $SEMANTIC_MEMORY_DIR or ~/.pi/agent/memory.
  */
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { createOllamaEmbedder, probeEmbedder } from "../src/embed.js";

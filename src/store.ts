@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   writeFileSync,
   type Dirent,
 } from "node:fs";
@@ -18,6 +19,7 @@ export interface MemoryNote {
   id: string;
   filePath: string;
   created: string;
+  updated?: string;
   tags: string[];
   content: string;
   hash: string;
@@ -37,6 +39,22 @@ export interface MemoryIndex {
 export interface IndexQueue {
   version: 1;
   files: string[];
+}
+
+export interface PossibleDupeCandidate {
+  filePath: string;
+  score: number;
+}
+
+export interface PossibleDupeEntry {
+  filePath: string;
+  at: string;
+  candidates: PossibleDupeCandidate[];
+}
+
+export interface PossibleDupes {
+  version: 1;
+  entries: PossibleDupeEntry[];
 }
 
 export function memoryDir(): string {
@@ -66,8 +84,9 @@ function trimLeadingBlankLines(text: string): string {
   return text.replace(/^\n+/, "");
 }
 
-function serializeNote(id: string, created: string, tags: string[], body: string): string {
+function serializeNote(id: string, created: string, tags: string[], body: string, updated?: string): string {
   let text = `---\nid: ${id}\ncreated: ${created}\n`;
+  if (updated !== undefined) text += `updated: ${updated}\n`;
   if (tags.length > 0) {
     text += "tags:\n";
     for (const tag of tags) {
@@ -88,6 +107,7 @@ function parseNoteText(filePath: string, text: string): MemoryNote | undefined {
   const frontmatter = lines.slice(1, closingIndex);
   let id: string | undefined;
   let created: string | undefined;
+  let updated: string | undefined;
   const tags: string[] = [];
 
   let i = 0;
@@ -103,6 +123,13 @@ function parseNoteText(filePath: string, text: string): MemoryNote | undefined {
     const createdMatch = /^created:\s*(.*)$/.exec(line);
     if (createdMatch) {
       created = createdMatch[1]!.trim();
+      i += 1;
+      continue;
+    }
+
+    const updatedMatch = /^updated:\s*(.*)$/.exec(line);
+    if (updatedMatch) {
+      updated = updatedMatch[1]!.trim();
       i += 1;
       continue;
     }
@@ -132,6 +159,7 @@ function parseNoteText(filePath: string, text: string): MemoryNote | undefined {
     id: stem,
     filePath,
     created,
+    updated,
     tags,
     content: body,
     hash: hashText(text),
@@ -308,4 +336,158 @@ export function filesNeedingIndex(memories: MemoryNote[], index: MemoryIndex): M
     const entry = byPath.get(memory.filePath);
     return entry === undefined || entry.hash !== memory.hash;
   });
+}
+
+export function archiveDir(): string {
+  return path.join(memoryDir(), ".archive");
+}
+
+export function possibleDupesPath(): string {
+  return path.join(memoryDir(), ".possible-dupes.json");
+}
+
+export function archiveNote(filePath: string): string | undefined {
+  let text: string;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const dir = archiveDir();
+  mkdirSync(dir, { recursive: true });
+  const id = path.parse(filePath).name;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const archivePath = path.join(dir, `${id}-${timestamp}.md`);
+  writeFileSync(archivePath, text);
+  return archivePath;
+}
+
+export function updateMemory(filePath: string, content: string, tags?: string[]): MemoryNote | undefined {
+  const existing = readNote(filePath);
+  if (existing === undefined) return undefined;
+
+  archiveNote(filePath);
+
+  const updated = new Date().toISOString();
+  const body = trimLeadingBlankLines(content);
+  const finalTags = tags ?? existing.tags;
+  const text = serializeNote(existing.id, existing.created, finalTags, body, updated);
+
+  writeFileSync(filePath, text);
+
+  return {
+    id: existing.id,
+    filePath,
+    created: existing.created,
+    updated,
+    tags: [...finalTags],
+    content: body,
+    hash: hashText(text),
+  };
+}
+
+export function touchUpdated(filePath: string): MemoryNote | undefined {
+  const existing = readNote(filePath);
+  if (existing === undefined) return undefined;
+
+  const updated = new Date().toISOString();
+  const text = serializeNote(existing.id, existing.created, existing.tags, existing.content, updated);
+  const hash = hashText(text);
+  writeFileSync(filePath, text);
+
+  const index = readIndex();
+  const entry = index.entries.find((e) => e.filePath === filePath);
+  if (entry !== undefined) {
+    entry.hash = hash;
+    writeIndex(index);
+  }
+
+  return { ...existing, updated, hash };
+}
+
+export function resolveMemoryPath(input: string): string | undefined {
+  const dir = memoryDir();
+
+  let realDir: string;
+  try {
+    realDir = realpathSync(dir);
+  } catch {
+    return undefined;
+  }
+
+  const resolved = path.resolve(dir, input);
+  let realResolved: string;
+  try {
+    realResolved = realpathSync(resolved);
+  } catch {
+    return undefined;
+  }
+
+  if (path.dirname(realResolved) !== realDir) return undefined;
+  if (!realResolved.endsWith(".md")) return undefined;
+  // Return the normalized path (not the symlink-resolved one) so it matches
+  // note.filePath; realpath was only used for escape validation.
+  return resolved;
+}
+
+function isPossibleDupeCandidate(value: unknown): value is PossibleDupeCandidate {
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return typeof obj.filePath === "string" && typeof obj.score === "number";
+}
+
+function isPossibleDupeEntry(value: unknown): value is PossibleDupeEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.filePath === "string" &&
+    typeof obj.at === "string" &&
+    Array.isArray(obj.candidates) &&
+    obj.candidates.every((c) => isPossibleDupeCandidate(c))
+  );
+}
+
+function isPossibleDupes(value: unknown): value is PossibleDupes {
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    obj.version === 1 &&
+    Array.isArray(obj.entries) &&
+    obj.entries.every((e) => isPossibleDupeEntry(e))
+  );
+}
+
+export function readPossibleDupes(): PossibleDupes {
+  let raw: string;
+  try {
+    raw = readFileSync(possibleDupesPath(), "utf8");
+  } catch {
+    return { version: 1, entries: [] };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { version: 1, entries: [] };
+  }
+
+  return isPossibleDupes(parsed) ? parsed : { version: 1, entries: [] };
+}
+
+export function writePossibleDupes(p: PossibleDupes): void {
+  const dir = memoryDir();
+  ensureMemoryDir(dir);
+  writeFileSync(path.join(dir, ".possible-dupes.json"), JSON.stringify(p, null, 2));
+}
+
+export function recordPossibleDupe(entry: PossibleDupeEntry): void {
+  const p = readPossibleDupes();
+  p.entries.push(entry);
+  writePossibleDupes(p);
+}
+
+export function clearPossibleDupes(): void {
+  writePossibleDupes({ version: 1, entries: [] });
 }

@@ -11,6 +11,10 @@ export interface SearchResult {
   score: number;
 }
 
+export interface SearchOptions {
+  minScore?: number;
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
 
@@ -27,11 +31,37 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+export function searchVector(
+  vector: number[],
+  topK: number,
+  index: MemoryIndex,
+  options?: SearchOptions,
+): SearchResult[] {
+  if (topK <= 0 || vector.length === 0 || index.entries.length === 0) return [];
+
+  const minScore = options?.minScore;
+  const results: SearchResult[] = [];
+  for (const entry of index.entries) {
+    if (!existsSync(entry.filePath)) continue;
+    const score = cosineSimilarity(vector, entry.vector);
+    if (minScore !== undefined && score < minScore) continue;
+    results.push({ filePath: entry.filePath, score });
+  }
+
+  results.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : 0;
+  });
+
+  return results.slice(0, topK);
+}
+
 export async function search(
   query: string,
   topK: number,
   embedder: Embedder,
   index: MemoryIndex,
+  options?: SearchOptions,
 ): Promise<SearchResult[]> {
   if (topK <= 0 || index.entries.length === 0) return [];
 
@@ -42,19 +72,5 @@ export async function search(
     return [];
   }
 
-  const results: SearchResult[] = [];
-  for (const entry of index.entries) {
-    if (!existsSync(entry.filePath)) continue;
-    results.push({
-      filePath: entry.filePath,
-      score: cosineSimilarity(vector, entry.vector),
-    });
-  }
-
-  results.sort((a, b) => {
-    if (a.score !== b.score) return b.score - a.score;
-    return a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : 0;
-  });
-
-  return results.slice(0, topK);
+  return searchVector(vector, topK, index, options);
 }

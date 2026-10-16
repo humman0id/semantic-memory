@@ -240,7 +240,7 @@ export function updateMemory(filePath: string, content: string, tags?: string[])
 /** Set/refresh `updated` only; rewrite file AND sync the index entry's hash (keep vector). */
 export function touchUpdated(filePath: string): MemoryNote | undefined;
 
-/** Canonicalize a user-supplied path for update_memory: resolve relative to memoryDir, realpath both, require a DIRECT child of memoryDir ending in .md. Rejects traversal, symlink escape, non-.md, and anything under .archive/. Returns the canonical absolute path or undefined. */
+/** Canonicalize a user-supplied path for update_memory: resolve relative to memoryDir, realpath both for validation, require a DIRECT child of memoryDir ending in .md. Rejects traversal, symlink escape, non-.md, and anything under .archive/. Returns the normalized absolute path (path.resolve) or undefined. */
 export function resolveMemoryPath(input: string): string | undefined;
 
 export function readPossibleDupes(): PossibleDupes;       // missing/corrupt => { version: 1, entries: [] }

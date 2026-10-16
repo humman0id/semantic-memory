@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cosineSimilarity, search } from "../src/search.js";
+import { cosineSimilarity, search, searchVector } from "../src/search.js";
 import type { Embedder } from "../src/embed.js";
 import type { MemoryIndex } from "../src/store.js";
 
@@ -112,5 +112,61 @@ describe("search", () => {
 
   it("returns [] on an empty index", async () => {
     expect(await search("query", 10, embedder, { version: 1, entries: [] })).toEqual([]);
+  });
+});
+
+describe("searchVector", () => {
+  function makeIndex(extra?: { filePath: string; vector: number[]; hash: string }): MemoryIndex {
+    return {
+      version: 1,
+      entries: [
+        { filePath: noteA, vector: [1, 0], hash: "a" },
+        { filePath: noteB, vector: [0, 1], hash: "b" },
+        ...(extra ? [extra] : []),
+      ],
+    };
+  }
+
+  it("ranks and slices topK", () => {
+    expect(searchVector([1, 0], 1, makeIndex())).toEqual([{ filePath: noteA, score: 1 }]);
+  });
+
+  it("filters by minScore", () => {
+    expect(searchVector([1, 0], 10, makeIndex(), { minScore: 0.5 })).toEqual([
+      { filePath: noteA, score: 1 },
+    ]);
+    expect(searchVector([1, 0], 10, makeIndex(), { minScore: 1.5 })).toEqual([]);
+  });
+
+  it("skips missing files", () => {
+    const idx = makeIndex({ filePath: missing, vector: [1, 0], hash: "m" });
+    expect(searchVector([0, 1], 10, idx, { minScore: 0.5 })).toEqual([
+      { filePath: noteB, score: 1 },
+    ]);
+  });
+
+  it("returns [] for an empty vector or empty index", () => {
+    expect(searchVector([], 10, makeIndex())).toEqual([]);
+    expect(searchVector([1, 0], 10, { version: 1, entries: [] })).toEqual([]);
+  });
+});
+
+describe("search with minScore", () => {
+  it("returns [] when nothing meets minScore", async () => {
+    const index: MemoryIndex = {
+      version: 1,
+      entries: [{ filePath: noteA, vector: [1, 0], hash: "a" }],
+    };
+    expect(await search("query", 10, embedder, index, { minScore: 1.5 })).toEqual([]);
+  });
+
+  it("keeps results at or above minScore", async () => {
+    const index: MemoryIndex = {
+      version: 1,
+      entries: [{ filePath: noteA, vector: [1, 0], hash: "a" }],
+    };
+    expect(await search("query", 10, embedder, index, { minScore: 0.5 })).toEqual([
+      { filePath: noteA, score: 1 },
+    ]);
   });
 });
