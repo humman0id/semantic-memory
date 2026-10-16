@@ -39,6 +39,14 @@ local embeddings (`embeddinggemma` via Ollama), and cosine-similarity search.
     instruction; covered by tests.
 15. `DUP_SCORE` exceeds the maximum score of every change/contradiction pair in
     the calibration set by a recorded margin.
+16. Scrub: a documented search finds no absolute home paths, secrets, or
+    personal memory files in the working tree; history findings are reported
+    in `docs/progress.md`.
+17. Package: `npm pack --dry-run` file list matches the allowlist and contains
+    no tests, logs, or secrets.
+18. README contains every required section, both Mermaid diagrams, and no
+    unverified claims.
+19. Tests and lint pass with Ollama unreachable (CI-equivalent).
 
 ## Out of scope (MVP)
 

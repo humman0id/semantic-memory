@@ -1,7 +1,7 @@
 {
-  "name": "semantic_memory",
+  "name": "semantic-memory-pi",
   "version": "0.1.0",
-  "description": "Long-term memory extension for the Pi coding agent: .md notes + embeddings + cosine search",
+  "description": "Long-term memory extension for the Pi coding agent: Markdown notes, local embeddings (embeddinggemma via Ollama), and cosine-similarity search",
   "license": "MIT",
   "author": "humman0id",
   "repository": {
@@ -13,7 +13,11 @@
     "url": "https://github.com/humman0id/semantic-memory/issues"
   },
   "type": "module",
-  "keywords": ["pi-package"],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["pi-package", "pi", "memory", "semantic-memory", "embeddings", "ollama"],
+  "files": ["src", "prompts"],
   "pi": {
     "extensions": ["./src/index.ts"]
   },

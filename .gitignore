@@ -1,5 +1,15 @@
 node_modules/
 dist/
+build/
 *.log
 .DS_Store
 .env
+.env.*
+.env.local
+
+# local semantic_memory data (in case SEMANTIC_MEMORY_DIR is set inside this repo)
+.index.json
+.queue.json
+.possible-dupes.json
+.archive/
+memory/

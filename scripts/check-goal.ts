@@ -6,7 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -529,8 +529,144 @@ async function check15(): Promise<CheckResult> {
   };
 }
 
+// ---------------------------------------------------------------- criterion 16
+async function check16(): Promise<CheckResult> {
+  const tracked = run("git", ["ls-files"]).out.trim().split("\n").filter(Boolean);
+  const username = userInfo().username;
+
+  const forbiddenNames = [".env", ".index.json", ".queue.json", ".possible-dupes.json", "MEMORY.md", ".archive/"];
+  const nameHits = tracked.filter((f) => forbiddenNames.some((n) => f.includes(n)));
+
+  const secretPatterns = [
+    /ghp_[A-Za-z0-9]{20,}/,
+    /AKIA[0-9A-Z]{16}/,
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+    /xox[bap]-[A-Za-z0-9-]+/,
+    /sk-[A-Za-z0-9]{20,}/,
+  ];
+  const pathHits: string[] = [];
+  const secretHits: string[] = [];
+  const usernameHits: string[] = [];
+
+  for (const f of tracked) {
+    if (f.startsWith("scripts/") || f === "package-lock.json") continue;
+    let content: string;
+    try {
+      content = readFileSync(path.join(ROOT, f), "utf8");
+    } catch {
+      continue;
+    }
+    if (/\/Users\/|\/home\/[a-z]/.test(content)) pathHits.push(f);
+    if (username && content.includes(username)) usernameHits.push(f);
+    if (secretPatterns.some((re) => re.test(content))) secretHits.push(f);
+  }
+
+  const progress = readFileSync(path.join(ROOT, "docs", "progress.md"), "utf8");
+  const reported = /[Ss]crub/.test(progress);
+
+  const ok =
+    nameHits.length === 0 && pathHits.length === 0 && secretHits.length === 0 && usernameHits.length === 0 && reported;
+  return {
+    criterion: "16. scrub: no absolute paths/secrets/memory files; history findings reported",
+    ok,
+    details: `tracked=${tracked.length} nameHits=${JSON.stringify(nameHits)} pathHits=${JSON.stringify(pathHits)} secretHits=${JSON.stringify(secretHits)} usernameHits=${JSON.stringify(usernameHits)} reportedInProgress=${reported}`,
+  };
+}
+
+// ---------------------------------------------------------------- criterion 17
+async function check17(): Promise<CheckResult> {
+  const pack = run("npm", ["pack", "--dry-run"]);
+  const out = pack.out;
+  const forbidden = [
+    "test/",
+    "scripts/",
+    "docs/",
+    "GOAL.md",
+    "AGENTS.md",
+    "package-lock.json",
+    "calibrate-thresholds",
+    "progress.md",
+    "contracts.md",
+    "decisions.md",
+    "pi-notes.md",
+    "find-duplicates",
+    "check-goal",
+    ".env",
+  ];
+  const hasForbidden = forbidden.filter((s) => out.includes(s));
+  const required = ["LICENSE", "README.md", "package.json", "src/", "prompts/memory-instructions.md"];
+  const missing = required.filter((s) => !out.includes(s));
+  const ok = pack.status === 0 && hasForbidden.length === 0 && missing.length === 0;
+  return {
+    criterion: "17. npm pack --dry-run file list matches allowlist",
+    ok,
+    details: `exit=${pack.status} forbidden=${JSON.stringify(hasForbidden)} missing=${JSON.stringify(missing)}\n${out}`,
+  };
+}
+
+// ---------------------------------------------------------------- criterion 18
+async function check18(): Promise<CheckResult> {
+  const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const sections = [
+    "## Requirements",
+    "## Install",
+    "## Configure",
+    "## How it works",
+    "## Security",
+    "## Limitations",
+    "## Design notes",
+  ];
+  const missingSections = sections.filter((s) => !readme.includes(s));
+  const mermaidCount = (readme.match(/```mermaid/g) ?? []).length;
+  const envVars = [
+    "SEMANTIC_MEMORY_EMBED_URL",
+    "SEMANTIC_MEMORY_EMBED_MODEL",
+    "SEMANTIC_MEMORY_DIR",
+    "SEMANTIC_MEMORY_DUP_SCORE",
+    "SEMANTIC_MEMORY_SIMILAR_SCORE",
+    "SEMANTIC_MEMORY_MIN_SCORE",
+  ];
+  const missingVars = envVars.filter((v) => !readme.includes(v));
+  const tools = ["save_memory", "search_memory", "update_memory", "allowNew"];
+  const missingTools = tools.filter((t) => !readme.includes(t));
+  const numbers = ["0.97", "0.59", "0.44", "0.944", "0.03", "0.730", "0.961", "0.826"];
+  const missingNumbers = numbers.filter((n) => !readme.includes(n));
+  const stale = ["0.95", "0.62"].filter((n) => readme.includes(n));
+  const placeholderOk = readme.includes("git:github.com/<user>/<repo>");
+  const hasOllama = readme.includes("ollama pull embeddinggemma") && readme.includes("embeddinggemma");
+  const ok =
+    missingSections.length === 0 &&
+    mermaidCount === 2 &&
+    missingVars.length === 0 &&
+    missingTools.length === 0 &&
+    missingNumbers.length === 0 &&
+    stale.length === 0 &&
+    placeholderOk &&
+    hasOllama;
+  return {
+    criterion: "18. README has all sections, both diagrams, no unverified claims",
+    ok,
+    details: `missingSections=${JSON.stringify(missingSections)} mermaid=${mermaidCount} missingVars=${JSON.stringify(missingVars)} missingTools=${JSON.stringify(missingTools)} missingNumbers=${JSON.stringify(missingNumbers)} stale=${JSON.stringify(stale)} placeholderOk=${placeholderOk} hasOllama=${hasOllama}`,
+  };
+}
+
+// ---------------------------------------------------------------- criterion 19
+async function check19(): Promise<CheckResult> {
+  const env = { ...process.env, SEMANTIC_MEMORY_EMBED_URL: "http://127.0.0.1:1" };
+  const opts = { cwd: ROOT, encoding: "utf8", shell: process.platform === "win32", env } as const;
+  const lint = spawnSync("npm", ["run", "lint"], opts);
+  const test = spawnSync("npm", ["run", "test"], opts);
+  const tsc = spawnSync("npx", ["tsc", "--noEmit"], opts);
+  const ok = lint.status === 0 && test.status === 0 && tsc.status === 0;
+  return {
+    criterion: "19. lint + tests pass with Ollama unreachable (CI-equivalent)",
+    ok,
+    details: `lint=${lint.status} test=${test.status} tsc=${tsc.status}\n${test.stdout ?? ""}${test.stderr ?? ""}`.slice(0, 2000),
+  };
+}
+
 async function main(): Promise<void> {
-  const factories = [check1, check2, check3, check4, check5, check6, check7, check8, check9, check10, check11, check12, check13, check14, check15];
+  const factories = [check1, check2, check3, check4, check5, check6, check7, check8, check9, check10, check11, check12, check13, check14, check15, check16, check17, check18, check19];
   const checks: CheckResult[] = [];
   for (const f of factories) {
     try {

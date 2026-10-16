@@ -7,12 +7,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Unit tests use a mocked embedder (no network). Real-Ollama integration
+      # lives in scripts/check-goal.ts and is not run here. Point the default
+      # endpoint at an unreachable URL so nothing can reach a local Ollama.
+      SEMANTIC_MEMORY_EMBED_URL: http://127.0.0.1:1
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -21,7 +26,7 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit tests
+      - name: Unit tests (mocked embedder)
         run: npm test
 
       - name: Typecheck
