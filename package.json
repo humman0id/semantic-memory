@@ -2,6 +2,16 @@
   "name": "semantic_memory",
   "version": "0.1.0",
   "description": "Long-term memory extension for the Pi coding agent: .md notes + embeddings + cosine search",
+  "license": "MIT",
+  "author": "humman0id",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/humman0id/semantic-memory.git"
+  },
+  "homepage": "https://github.com/humman0id/semantic-memory#readme",
+  "bugs": {
+    "url": "https://github.com/humman0id/semantic-memory/issues"
+  },
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
