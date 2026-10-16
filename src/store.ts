@@ -367,8 +367,6 @@ export function updateMemory(filePath: string, content: string, tags?: string[])
   const existing = readNote(filePath);
   if (existing === undefined) return undefined;
 
-  archiveNote(filePath);
-
   const updated = new Date().toISOString();
   const body = trimLeadingBlankLines(content);
   const finalTags = tags ?? existing.tags;

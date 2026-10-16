@@ -217,7 +217,7 @@ describe("queue", () => {
 });
 
 describe("updateMemory", () => {
-  it("archives the previous version, replaces body, preserves id/created, sets updated, keeps tags when omitted", () => {
+  it("replaces body, preserves id/created, sets updated, keeps tags when omitted", () => {
     const note = writeMemory("old body", ["a", "b"]);
     const updated = updateMemory(note.filePath, "new body");
 
@@ -231,12 +231,6 @@ describe("updateMemory", () => {
     const reread = readNote(note.filePath);
     expect(reread!.content).toBe("new body");
     expect(reread!.updated).toBe(updated!.updated);
-
-    const archived = readdirSync(archiveDir()).filter((f) => f.endsWith(".md"));
-    expect(archived).toHaveLength(1);
-    expect(archived[0]).toContain(note.id);
-    const archiveRaw = readFileSync(join(archiveDir(), archived[0]!), "utf8");
-    expect(archiveRaw).toContain("old body");
   });
 
   it("replaces tags when provided (including clearing with [])", () => {

@@ -234,7 +234,7 @@ export function possibleDupesPath(): string; // <memoryDir>/.possible-dupes.json
 /** Copy the current file to .archive/<id>-<timestamp>.md; return archive path (undefined if missing). */
 export function archiveNote(filePath: string): string | undefined;
 
-/** Archive previous version, replace body, keep id/created, set updated=now; tags omitted => keep existing. Recomputes hash. Does NOT re-embed. */
+/** Replace body, keep id/created, set updated=now; tags omitted => keep existing. Recomputes hash. Does NOT archive or re-embed (the caller archives + embeds). */
 export function updateMemory(filePath: string, content: string, tags?: string[]): MemoryNote | undefined;
 
 /** Set/refresh `updated` only; rewrite file AND sync the index entry's hash (keep vector). */

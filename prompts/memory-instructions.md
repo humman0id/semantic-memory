@@ -14,6 +14,17 @@ details, not conversation ephemera. Good candidates:
 - Stable project facts (architecture, layout, build/test commands, gotchas).
 - Corrections the user makes about how you should behave.
 
+## Before saving, check for an existing note
+
+- Consider whether the fact is already known or already covered by an existing
+  note. Do not save what existing notes already say.
+- If information has changed or contradicts an existing note, update that note
+  with `update_memory(file_path, content, tags?)` instead of adding a new one.
+- `save_memory` may report that a similar note already exists. In that case:
+  - update the most relevant note with `update_memory`, or
+  - call `save_memory(content, tags, allowNew: true)` only when the new content
+    is a genuinely distinct fact, not a rewording or contradiction.
+
 ## How to save
 
 - One topic per note. Write each note as a standalone, self-contained fact that

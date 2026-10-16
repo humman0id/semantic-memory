@@ -79,4 +79,31 @@ Started. New criteria appended to GOAL.md as 8–13 (renumbered from the task's
 
 ## Iterations
 
-- (pending)
+- **Iteration 1** — Implemented memory hygiene directly (store-agent subagent
+  aborted on launch; user said continue). Added: `updated` frontmatter, archive
+  (`store.archiveNote`/`updateMemory`/`touchUpdated`/`resolveMemoryPath`),
+  `.possible-dupes.json`, `searchVector` + `minScore`; rewrote `index.ts`
+  (dedupe save, `update_memory` tool, minScore injection, queue-time possible
+  dupes, session_start notify) and updated `prompts/memory-instructions.md`.
+  Updated `check-goal.ts` to 13 criteria. `tsc`/`eslint`/`vitest` (63) green;
+  check-goal 12/13 — criterion 13 false negative in the check itself (a stray
+  second queued note), fixed in the same iteration.
+- **Iteration 2** — final `check-goal.ts` run: **13/13, exit 0**. Updated README
+  (config table + usage).
+
+## Calibration result
+
+`embeddinggemma` (via Ollama): DUP=0.95, SIMILAR=0.62, MIN=0.44 — recorded in
+`docs/decisions.md`. Note/note duplicate and same-topic classes overlap, so
+DUP is set above the same-topic max (near-verbatim only); the ambiguous band is
+handled by the similar/candidates path.
+
+## find-duplicates (read-only) result
+
+Ran against `~/.pi/agent/memory`: **0 note(s)** — the directory currently
+contains only `.index.json` and `.queue.json` (the two earlier smoke-test notes
+are no longer present). Script did not modify anything.
+
+## Done
+
+- `npx tsx scripts/check-goal.ts` exits 0 (13/13).

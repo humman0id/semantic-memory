@@ -5,7 +5,7 @@
  * Run: npx tsx scripts/check-goal.ts
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,16 +13,24 @@ import { pathToFileURL } from "node:url";
 import type { Embedder, EmbedderStatus, OllamaEmbedderOptions } from "../src/embed.ts";
 import type { PreflightResult } from "../src/preflight.ts";
 import type { SearchResult } from "../src/search.ts";
-import type { IndexQueue, MemoryIndex, MemoryNote } from "../src/store.ts";
+import type { IndexQueue, MemoryIndex, MemoryNote, PossibleDupes } from "../src/store.ts";
 import type { MemoryToolCore, RetrievalController, SaveMemoryToolResult } from "../src/index.ts";
 
 type IndexModule = {
-  createMemoryToolCore(deps: { embedder: Embedder; topK?: number; previewLength?: number }): MemoryToolCore;
+  createMemoryToolCore(deps: {
+    embedder: Embedder;
+    topK?: number;
+    previewLength?: number;
+    dupScore?: number;
+    similarScore?: number;
+    minScore?: number;
+  }): MemoryToolCore;
   createRetrievalController(deps: {
-    search(query: string, topK: number): Promise<SearchResult[]>;
+    search(query: string, topK: number, minScore?: number): Promise<SearchResult[]>;
     readNote(filePath: string): MemoryNote | undefined;
     topK?: number;
     previewLength?: number;
+    minScore?: number;
   }): RetrievalController;
 };
 type EmbedModule = {
@@ -30,7 +38,13 @@ type EmbedModule = {
   probeEmbedder(embedder: Embedder): Promise<EmbedderStatus>;
 };
 type PreflightModule = { preflight(embedder: Embedder): Promise<PreflightResult> };
-type StoreModule = { readIndex(): MemoryIndex; readQueue(): IndexQueue };
+type StoreModule = {
+  readIndex(): MemoryIndex;
+  readQueue(): IndexQueue;
+  readPossibleDupes(): PossibleDupes;
+  readNote(filePath: string): MemoryNote | undefined;
+  listMemories(): MemoryNote[];
+};
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 
@@ -50,7 +64,7 @@ async function importSrc<T>(name: string): Promise<T> {
   return (await import(pathToFileURL(path.join(ROOT, "src", name)).href)) as T;
 }
 
-function tempMemoryDir(): string {
+function newTempDir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "semantic-memory-"));
   process.env.SEMANTIC_MEMORY_DIR = dir;
   return dir;
@@ -58,6 +72,14 @@ function tempMemoryDir(): string {
 
 function cleanup(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
+}
+
+function mapEmbedder(vectors: Record<string, number[]>): Embedder {
+  return {
+    async embed(text: string): Promise<number[]> {
+      return vectors[text] ?? [0, 0, 0];
+    },
+  };
 }
 
 // ---------------------------------------------------------------- criterion 1
@@ -112,7 +134,7 @@ async function check2(): Promise<CheckResult> {
 
 // ---------------------------------------------------------------- criterion 3
 async function check3(): Promise<CheckResult> {
-  const dir = tempMemoryDir();
+  const dir = newTempDir();
   try {
     const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
     const { readIndex } = await importSrc<StoreModule>("store.ts");
@@ -120,17 +142,17 @@ async function check3(): Promise<CheckResult> {
     const core = createMemoryToolCore({ embedder: fake });
     const res: SaveMemoryToolResult = await core.saveMemory("User prefers tabs over spaces.", ["preference", "style"]);
 
-    const fileOk = existsSync(res.filePath);
-    const raw = fileOk ? readFileSync(res.filePath, "utf8") : "";
+    const fileOk = existsSync(res.filePath ?? "");
+    const raw = fileOk ? readFileSync(res.filePath ?? "", "utf8") : "";
     const fmOk = raw.startsWith("---") && /id:\s*\S+/.test(raw) && /created:\s*\S+/.test(raw) && /tags:/.test(raw);
     const bodyOk = raw.includes("User prefers tabs over spaces.");
     const idx = readIndex();
     const indexed = idx.entries.some((e) => e.filePath === res.filePath && e.vector.length === 16);
-    const ok = fileOk && fmOk && bodyOk && res.indexed && indexed && !res.queued;
+    const ok = fileOk && fmOk && bodyOk && res.indexed && indexed && !res.queued && res.status === "saved";
     return {
       criterion: "3. save_memory writes .md with frontmatter and indexes it",
       ok,
-      details: `fileOk=${fileOk} frontmatterOk=${fmOk} bodyOk=${bodyOk} indexed=${res.indexed} indexEntryOk=${indexed}\n${raw}`,
+      details: `fileOk=${fileOk} frontmatterOk=${fmOk} bodyOk=${bodyOk} status=${res.status} indexed=${res.indexed} indexEntryOk=${indexed}\n${raw}`,
     };
   } finally {
     cleanup(dir);
@@ -139,7 +161,7 @@ async function check3(): Promise<CheckResult> {
 
 // ---------------------------------------------------------------- criterion 4
 async function check4(): Promise<CheckResult> {
-  const dir = tempMemoryDir();
+  const dir = newTempDir();
   try {
     const { createOllamaEmbedder, probeEmbedder } = await importSrc<EmbedModule>("embed.ts");
     const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
@@ -202,7 +224,7 @@ async function check5(): Promise<CheckResult> {
 
 // ---------------------------------------------------------------- criterion 6
 async function check6(): Promise<CheckResult> {
-  const dir = tempMemoryDir();
+  const dir = newTempDir();
   try {
     const { createOllamaEmbedder } = await importSrc<EmbedModule>("embed.ts");
     const { preflight } = await importSrc<PreflightModule>("preflight.ts");
@@ -213,9 +235,9 @@ async function check6(): Promise<CheckResult> {
     const msgOk = !pr.ok && !!pr.message && pr.message.includes("ollama pull embeddinggemma");
     const core = createMemoryToolCore({ embedder });
     const res = await core.saveMemory("Still saved while Ollama is down", ["resilience"]);
-    const fileOk = existsSync(res.filePath);
-    const queued = readQueue().files.includes(res.filePath);
-    const ok = msgOk && fileOk && res.queued && !res.indexed && queued;
+    const fileOk = existsSync(res.filePath ?? "");
+    const queued = readQueue().files.includes(res.filePath ?? "");
+    const ok = msgOk && fileOk && res.status === "queued" && res.queued && !res.indexed && queued;
     return {
       criterion: "6. with Ollama stopped: clear message, save writes + queues",
       ok,
@@ -246,8 +268,213 @@ async function check7(): Promise<CheckResult> {
   };
 }
 
+// ---------------------------------------------------------------- criterion 8
+async function check8(): Promise<CheckResult> {
+  const dir = newTempDir();
+  try {
+    const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
+    const { listMemories } = await importSrc<StoreModule>("store.ts");
+
+    // mocked embedder: near-identical vectors => duplicate, one file
+    const fake = mapEmbedder({ "tabs over spaces": [1, 0], "tabs rather than spaces": [0.99, 0.1] });
+    const core = createMemoryToolCore({ embedder: fake, dupScore: 0.9, similarScore: 0.6 });
+    const a = await core.saveMemory("tabs over spaces", ["pref"]);
+    const b = await core.saveMemory("tabs rather than spaces", ["pref"]);
+    const mockedOk = a.status === "saved" && b.status === "duplicate" && b.filePath === a.filePath && listMemories().length === 1;
+
+    // real Ollama: identical content twice => duplicate
+    const { createOllamaEmbedder, probeEmbedder } = await importSrc<EmbedModule>("embed.ts");
+    const real = createOllamaEmbedder();
+    const status = await probeEmbedder(real);
+    if (!status.available) {
+      return {
+        criterion: "8. near-identical save twice yields one file + duplicate result",
+        ok: mockedOk,
+        skipped: !mockedOk ? false : true,
+        details: `mockedOk=${mockedOk}\nOllama unavailable: ${status.error ?? "unknown"} — real integration skipped`,
+      };
+    }
+    const rcore = createMemoryToolCore({ embedder: real });
+    const x = await rcore.saveMemory("The project uses Vitest as its test runner.", ["testing"]);
+    const y = await rcore.saveMemory("The project uses Vitest as its test runner.", ["testing"]);
+    const realOk = y.status === "duplicate" && y.filePath === x.filePath;
+    const ok = mockedOk && realOk;
+    return {
+      criterion: "8. near-identical save twice yields one file + duplicate result",
+      ok,
+      details: `mockedOk=${mockedOk} realOk=${realOk}\ny=${JSON.stringify(y)}`,
+    };
+  } catch (err) {
+    return { criterion: "8. near-identical save twice yields one file + duplicate result", ok: false, details: `threw: ${(err as Error).message}` };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// ---------------------------------------------------------------- criterion 9
+async function check9(): Promise<CheckResult> {
+  const dir = newTempDir();
+  try {
+    const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
+    const { listMemories } = await importSrc<StoreModule>("store.ts");
+    const fake = mapEmbedder({ "prefers npm": [1, 0], "prefers pnpm": [0.7, 0.7] });
+    const core = createMemoryToolCore({ embedder: fake, dupScore: 0.95, similarScore: 0.6 });
+
+    const a = await core.saveMemory("prefers npm", []);
+    const b = await core.saveMemory("prefers pnpm", []);
+    const similarOk = a.status === "saved" && b.status === "similar" && (b.candidates?.length ?? 0) >= 1 && listMemories().length === 1;
+
+    const c = await core.saveMemory("prefers pnpm", [], true);
+    const allowNewOk = c.status === "saved" && listMemories().length === 2;
+    const ok = similarOk && allowNewOk;
+    return {
+      criterion: "9. similar save writes nothing + returns candidates; allowNew writes",
+      ok,
+      details: `similarOk=${similarOk} allowNewOk=${allowNewOk}\nb=${JSON.stringify(b)}`,
+    };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// ---------------------------------------------------------------- criterion 10
+async function check10(): Promise<CheckResult> {
+  const dir = newTempDir();
+  try {
+    const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
+    const { readNote } = await importSrc<StoreModule>("store.ts");
+    const fake = mapEmbedder({ old: [1, 0], new: [0, 1] });
+    const core = createMemoryToolCore({ embedder: fake });
+
+    const saved = await core.saveMemory("old", ["t"]);
+    const before = readNote(saved.filePath ?? "")!;
+    const upd = await core.updateMemory(saved.filePath!, "new", ["t2"]);
+    const after = readNote(saved.filePath ?? "")!;
+    const archiveOk = upd.ok && existsSync(upd.archivePath ?? "") && readFileSync(upd.archivePath ?? "", "utf8").includes("old");
+    const fieldsOk = after.id === before.id && after.created === before.created && after.updated !== undefined && after.content === "new" && JSON.stringify(after.tags) === JSON.stringify(["t2"]);
+
+    const hits = await core.searchMemory("new", 5);
+    const searchOk = hits.some((h) => h.filePath === saved.filePath);
+
+    const outside = await core.updateMemory(path.join(dir, "..", "escape.md"), "x");
+    const txt = path.join(dir, "note.txt");
+    writeFileSync(txt, "x");
+    const nonMd = await core.updateMemory(txt, "x");
+    const archiveReject = await core.updateMemory(upd.archivePath ?? "", "x");
+    const rejectOk = !outside.ok && !nonMd.ok && !archiveReject.ok;
+
+    const ok = archiveOk && fieldsOk && searchOk && rejectOk;
+    return {
+      criterion: "10. update_memory replaces/preserves/archives/re-indexes and rejects bad paths",
+      ok,
+      details: `archiveOk=${archiveOk} fieldsOk=${fieldsOk} searchOk=${searchOk} rejectOk=${rejectOk}\nupd=${JSON.stringify(upd)}`,
+    };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// ---------------------------------------------------------------- criterion 11
+async function check11(): Promise<CheckResult> {
+  const { createRetrievalController, createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
+
+  let sawMin: number | undefined;
+  const ctrl = createRetrievalController({
+    search: async (_q: string, _k: number, minScore?: number) => {
+      sawMin = minScore;
+      const all = [
+        { filePath: "/tmp/low.md", score: 0.2 },
+        { filePath: "/tmp/high.md", score: 0.9 },
+      ];
+      return all.filter((h) => h.score >= (minScore ?? 0));
+    },
+    readNote: () => undefined,
+    minScore: 0.5,
+    topK: 5,
+  });
+  const block = await ctrl.onUserTurn("hello");
+  const injectedOk = sawMin === 0.5 && block.includes("/tmp/high.md") && !block.includes("/tmp/low.md");
+
+  const ctrl2 = createRetrievalController({ search: async () => [], readNote: () => undefined, minScore: 0.5 });
+  const emptyOk = (await ctrl2.onUserTurn("hello")) === "";
+
+  const dir = newTempDir();
+  try {
+    const core = createMemoryToolCore({ embedder: mapEmbedder({ query: [1, 0], one: [1, 0], two: [0, 1] }) });
+    await core.saveMemory("one", []);
+    await core.saveMemory("two", []);
+    const hits = await core.searchMemory("query", 10);
+    const scoredOk = hits.length === 2 && hits.every((h) => typeof h.score === "number");
+    const ok = injectedOk && emptyOk && scoredOk;
+    return {
+      criterion: "11. injection honors MIN_SCORE; search_memory returns scored results",
+      ok,
+      details: `injectedOk=${injectedOk} emptyOk=${emptyOk} scoredOk=${scoredOk}\nblock:\n${block}`,
+    };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// ---------------------------------------------------------------- criterion 12
+async function check12(): Promise<CheckResult> {
+  const decisions = readFileSync(path.join(ROOT, "docs", "decisions.md"), "utf8");
+  const indexSrc = readFileSync(path.join(ROOT, "src", "index.ts"), "utf8");
+  const hasScript = existsSync(path.join(ROOT, "scripts", "calibrate-thresholds.ts"));
+  const hasDecisions =
+    decisions.includes("embeddinggemma") &&
+    decisions.includes("0.95") &&
+    decisions.includes("0.62") &&
+    decisions.includes("0.44");
+  const defaultsMatch =
+    indexSrc.includes('envFloat("SEMANTIC_MEMORY_DUP_SCORE", 0.95)') &&
+    indexSrc.includes('envFloat("SEMANTIC_MEMORY_SIMILAR_SCORE", 0.62)') &&
+    indexSrc.includes('envFloat("SEMANTIC_MEMORY_MIN_SCORE", 0.44)');
+  const ok = hasScript && hasDecisions && defaultsMatch;
+  return {
+    criterion: "12. calibration recorded in decisions.md and code defaults match",
+    ok,
+    details: `hasScript=${hasScript} hasDecisions=${hasDecisions} defaultsMatch=${defaultsMatch}`,
+  };
+}
+
+// ---------------------------------------------------------------- criterion 13
+async function check13(): Promise<CheckResult> {
+  const dir = newTempDir();
+  try {
+    const { createMemoryToolCore } = await importSrc<IndexModule>("index.ts");
+    const { readPossibleDupes, readIndex } = await importSrc<StoreModule>("store.ts");
+
+    const vecs: Record<string, number[]> = { "existing fact": [1, 0], "queued similar": [0.9, 0.4] };
+    const working = mapEmbedder(vecs);
+    const good = createMemoryToolCore({ embedder: working, similarScore: 0.6 });
+    await good.saveMemory("existing fact", []);
+
+    const down: Embedder = { embed: async () => { throw new Error("down"); } };
+    const downCore = createMemoryToolCore({ embedder: down });
+    const queuedRes = await downCore.saveMemory("queued similar", []);
+    const okDown = queuedRes.status === "queued" && queuedRes.queued && existsSync(queuedRes.filePath ?? "");
+
+    const recovered = createMemoryToolCore({ embedder: working, similarScore: 0.6 });
+    const outcome = await recovered.processPending();
+
+    const dupes = readPossibleDupes();
+    const recordedOk = outcome.possibleDupes === 1 && dupes.entries.length === 1 && dupes.entries[0]!.filePath === queuedRes.filePath;
+    const notDeletedOk = existsSync(queuedRes.filePath ?? "");
+    const notIndexedOk = readIndex().entries.length === 1; // only "existing fact"
+    const ok = okDown && recordedOk && notDeletedOk && notIndexedOk;
+    return {
+      criterion: "13. queue processing records possible dupes instead of deleting",
+      ok,
+      details: `okDown=${okDown} recordedOk=${recordedOk} notDeletedOk=${notDeletedOk} notIndexedOk=${notIndexedOk}\noutcome=${JSON.stringify(outcome)}`,
+    };
+  } finally {
+    cleanup(dir);
+  }
+}
+
 async function main(): Promise<void> {
-  const factories = [check1, check2, check3, check4, check5, check6, check7];
+  const factories = [check1, check2, check3, check4, check5, check6, check7, check8, check9, check10, check11, check12, check13];
   const checks: CheckResult[] = [];
   for (const f of factories) {
     try {

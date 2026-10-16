@@ -39,6 +39,9 @@ Environment variables (all optional):
 | `SEMANTIC_MEMORY_EMBED_URL` | `http://localhost:11434` | Base URL of the Ollama embed endpoint |
 | `SEMANTIC_MEMORY_EMBED_MODEL` | `embeddinggemma` | Embedding model name |
 | `SEMANTIC_MEMORY_DIR` | `~/.pi/agent/memory` | Override the memory storage directory |
+| `SEMANTIC_MEMORY_DUP_SCORE` | `0.95` | note→note similarity at/above which a save is a duplicate |
+| `SEMANTIC_MEMORY_SIMILAR_SCORE` | `0.62` | note→note similarity at/above which a save returns candidates |
+| `SEMANTIC_MEMORY_MIN_SCORE` | `0.44` | query→note floor for automatic injection |
 
 Memory is stored under `~/.pi/agent/memory/`. Notes are `.md` files with
 `id`, `created`, and `tags` frontmatter; the index lives at
@@ -62,16 +65,22 @@ export SEMANTIC_MEMORY_DIR="$HOME/.pi/agent/semantic-memory"
 
 ## Usage
 
-In a Pi session the model can call two tools:
+In a Pi session the model can call three tools:
 
 ```
 save_memory(content="User prefers tabs over spaces.", tags=["preference", "style"])
+update_memory(file_path="/abs/path/note.md", content="User prefers tabs, not spaces.")
 search_memory(query="code formatting preference", topK=5)
 ```
 
-On the first user message of a session, the extension searches once and injects
-the top matching note paths (with short previews) into context. The model opens
-full notes with the built-in `read` tool.
+- `save_memory` dedupes: near-identical content updates the existing note's
+  timestamp; similar content returns candidates instead of writing (use
+  `allowNew: true` to force a new note).
+- `update_memory` replaces a note's body, keeps `id`/`created`, sets `updated`,
+  archives the previous version to `.archive/`, and re-indexes.
+- On the first user message of a session, the extension searches once and
+  injects the top matching note paths (above `SEMANTIC_MEMORY_MIN_SCORE`) into
+  context. The model opens full notes with the built-in `read` tool.
 
 ## Development
 
