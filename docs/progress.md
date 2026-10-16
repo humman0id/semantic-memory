@@ -19,7 +19,31 @@ Log of iterations toward the GOAL. Orchestrator-only file.
   `.gitignore`, `prompts/memory-instructions.md`, `README.md`, `AGENTS.md`,
   `GOAL.md`.
 
-## Phase 2 — Contracts
+## Phase 2 — Contracts (done)
+
+- Wrote `docs/contracts.md`: module signatures (`embed.ts`, `preflight.ts`,
+  `store.ts`, `search.ts`, `index.ts`) and data formats (note frontmatter,
+  `.index.json`, `.queue.json`).
+- Added `readNote` and `createMemoryToolCore` / `createRetrievalController`
+  testable seams so `check-goal.ts` can verify criteria 3/5/6 without a model.
+- Wrote `scripts/check-goal.ts` (checks all 7 criteria; baseline: 1/7 pass,
+  criterion 7 README only — rest fail as expected on stubs).
+
+## Phase 3 — Build via subagents
+
+### store-agent + embed-agent (done, parallel)
+
+- store-agent implemented `src/store.ts` + `src/search.ts` and
+  `test/store.test.ts` + `test/search.test.ts` (16 + 9 tests).
+- embed-agent implemented `src/embed.ts` + `src/preflight.ts` and
+  `test/embed.test.ts` + `test/preflight.test.ts` (10 tests).
+- Full validation now: `tsc --noEmit` pass, `eslint .` pass except 3 stub
+  errors in `src/index.ts` (expected, hooks-agent pending), `vitest run` 35/35.
+- Convention noted: value imports use `.js` (NodeNext); type-only imports may
+  use `.ts`. jiti (Pi's loader) resolves both.
+- No contract changes required.
+
+### hooks-agent
 
 - (pending)
 
