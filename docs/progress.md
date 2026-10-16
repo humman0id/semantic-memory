@@ -63,3 +63,20 @@ Log of iterations toward the GOAL. Orchestrator-only file.
 ## Done
 
 - `npx tsx scripts/check-goal.ts` exits 0 (7/7).
+
+---
+
+# Feature 2 — Memory hygiene
+
+Started. New criteria appended to GOAL.md as 8–13 (renumbered from the task's
+11–16 per orchestrator/user clarification; existing 1–7 untouched). Goals:
+
+- Dedupe/update-instead-of-add on `save_memory` (`allowNew?`, DUP/SIMILAR scores).
+- New `update_memory` tool (archive-to-`.archive`, `updated` frontmatter).
+- Injection threshold `SEMANTIC_MEMORY_MIN_SCORE`; `search_memory` minScore param.
+- Calibration script → `docs/decisions.md`; read-only `find-duplicates.ts`.
+- `.possible-dupes.json` for queue-time near-duplicates.
+
+## Iterations
+
+- (pending)

@@ -15,6 +15,8 @@ All paths are absolute unless noted. All modules are ESM TypeScript.
 | Memory dir | `~/.pi/agent/memory/` (override: env `SEMANTIC_MEMORY_DIR`) | raw `.md` notes |
 | Index | `<memoryDir>/.index.json` | `{filePath, vector, hash}` per embedded note |
 | Queue | `<memoryDir>/.queue.json` | note paths awaiting indexing |
+| Archive | `<memoryDir>/.archive/` | previous versions of updated notes (excluded from index/search) |
+| Possible dupes | `<memoryDir>/.possible-dupes.json` | near-duplicate candidates found during queue processing |
 
 `~` resolves via `os.homedir()`. Env overrides are read at call time, not cached.
 
@@ -28,6 +30,7 @@ A memory note is a single `.md` file `<memoryDir>/<id>.md`:
 ---
 id: 3f9c1e2a-...
 created: 2026-10-16T10:00:00.000Z
+updated: 2026-10-16T11:00:00.000Z
 tags:
   - preference
   - style
@@ -41,6 +44,8 @@ Rules:
   is exactly `---`.
 - `id` — a UUID string (the filename stem, no `.md`).
 - `created` — ISO-8601 UTC string.
+- `updated` — optional ISO-8601 UTC string; set/refreshed when the note is
+  updated or touched as a duplicate. Written after `created`, before `tags`.
 - `tags` — a YAML list. Each tag is a line `  - <tag>` (two-space indent).
   Omit the `tags:` key entirely when there are no tags.
 - The body is everything after the closing `---`, with leading blank lines
@@ -76,6 +81,29 @@ Rules:
 
 `files` is a list of absolute note paths that still need indexing. Duplicates
 are removed on enqueue. `dequeueAll()` returns the list and clears the queue.
+
+---
+
+## 4a. Possible-dupes format
+
+`<memoryDir>/.possible-dupes.json`:
+
+```json
+{
+  "version": 1,
+  "entries": [
+    {
+      "filePath": "/abs/path/queued.md",
+      "at": "2026-10-16T12:00:00.000Z",
+      "candidates": [ { "filePath": "/abs/path/older.md", "score": 0.83 } ]
+    }
+  ]
+}
+```
+
+Written during queue processing when a queued note is a near-duplicate or
+similar to an existing note. The note is left on disk and **not** indexed.
+`session_start` reads this once, notifies the model, then clears it.
 
 ---
 
@@ -139,6 +167,7 @@ export interface MemoryNote {
   id: string;        // filename stem
   filePath: string;  // absolute path
   created: string;   // ISO-8601 UTC
+  updated?: string;  // ISO-8601 UTC, set on update/touch
   tags: string[];
   content: string;   // body text (frontmatter removed)
   hash: string;      // sha256 hex of the entire raw file text
@@ -160,6 +189,22 @@ export interface IndexQueue {
   files: string[];
 }
 
+export interface PossibleDupeCandidate {
+  filePath: string;
+  score: number;
+}
+
+export interface PossibleDupeEntry {
+  filePath: string;    // the note being checked (usually a queued file)
+  at: string;          // ISO-8601 UTC
+  candidates: PossibleDupeCandidate[];
+}
+
+export interface PossibleDupes {
+  version: 1;
+  entries: PossibleDupeEntry[];
+}
+
 export function memoryDir(): string;
 export function indexPath(): string;
 export function queuePath(): string;
@@ -167,7 +212,7 @@ export function queuePath(): string;
 export function hashText(text: string): string;   // sha256 hex
 
 export function writeMemory(content: string, tags?: string[]): MemoryNote;
-export function listMemories(): MemoryNote[];      // all *.md in memoryDir, sorted by created asc
+export function listMemories(): MemoryNote[];      // direct *.md children of memoryDir (excludes .archive/), sorted by created asc
 export function readNote(filePath: string): MemoryNote | undefined; // parse one file, or undefined if missing
 
 export function readIndex(): MemoryIndex;          // missing/corrupt => { version: 1, entries: [] }
@@ -182,6 +227,26 @@ export function dequeueAll(): string[];            // return files, then clear q
 
 /** Notes whose filePath is absent from the index or whose hash changed. */
 export function filesNeedingIndex(memories: MemoryNote[], index: MemoryIndex): MemoryNote[];
+
+export function archiveDir(): string;    // <memoryDir>/.archive
+export function possibleDupesPath(): string; // <memoryDir>/.possible-dupes.json
+
+/** Copy the current file to .archive/<id>-<timestamp>.md; return archive path (undefined if missing). */
+export function archiveNote(filePath: string): string | undefined;
+
+/** Archive previous version, replace body, keep id/created, set updated=now; tags omitted => keep existing. Recomputes hash. Does NOT re-embed. */
+export function updateMemory(filePath: string, content: string, tags?: string[]): MemoryNote | undefined;
+
+/** Set/refresh `updated` only; rewrite file AND sync the index entry's hash (keep vector). */
+export function touchUpdated(filePath: string): MemoryNote | undefined;
+
+/** Canonicalize a user-supplied path for update_memory: resolve relative to memoryDir, realpath both, require a DIRECT child of memoryDir ending in .md. Rejects traversal, symlink escape, non-.md, and anything under .archive/. Returns the canonical absolute path or undefined. */
+export function resolveMemoryPath(input: string): string | undefined;
+
+export function readPossibleDupes(): PossibleDupes;       // missing/corrupt => { version: 1, entries: [] }
+export function writePossibleDupes(p: PossibleDupes): void;
+export function recordPossibleDupe(entry: PossibleDupeEntry): void;  // append + persist
+export function clearPossibleDupes(): void;               // reset to empty + persist
 ```
 
 Concurrency note: `readIndex`/`writeIndex` and `readQueue`/`writeQueue` are
@@ -201,21 +266,36 @@ export interface SearchResult {
   score: number;      // cosine similarity in [-1, 1]
 }
 
+export interface SearchOptions {
+  minScore?: number;  // inclusive lower bound; entries below it are dropped
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number;
 
-/** Embed the query and return the topK index entries by cosine similarity. */
+/** Compare one vector against the index (no embedding). Returns topK results. */
+export function searchVector(
+  vector: number[],
+  topK: number,
+  index: MemoryIndex,
+  options?: SearchOptions,
+): SearchResult[];
+
+/** Embed the query, then searchVector over the index. */
 export function search(
   query: string,
   topK: number,
   embedder: Embedder,
   index: MemoryIndex,
+  options?: SearchOptions,
 ): Promise<SearchResult[]>;
 ```
 
-- `search` returns **file paths and scores only** — never note contents.
-- Results are sorted by score descending, then by `filePath` ascending for ties.
+- Both return **file paths and scores only** — never note contents.
+- Results sorted by score descending, then `filePath` ascending for ties.
 - Entries whose `filePath` no longer exists on disk are skipped.
-- Empty index or failed embed => `[]` (do not throw).
+- `searchVector` with empty vector or empty index => `[]`; `search` with failed
+  embed or empty index => `[]` (neither throws).
+- `minScore` filters by `score >= minScore` before top-K slicing.
 
 ---
 
@@ -224,10 +304,28 @@ export function search(
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export interface SaveMemoryToolResult {
+export type SaveMemoryStatus = "saved" | "queued" | "duplicate" | "similar";
+
+export interface SaveCandidate {
   filePath: string;
-  indexed: boolean;   // true when embedded + indexed now
-  queued: boolean;    // true when embeddings unavailable and the note is queued
+  score: number;
+  preview: string;              // short note-body preview
+}
+
+export interface SaveMemoryToolResult {
+  status: SaveMemoryStatus;
+  filePath?: string;            // "saved"/"queued": new note; "duplicate": existing note
+  indexed: boolean;
+  queued: boolean;
+  score?: number;               // top note-to-note cosine (duplicate/similar)
+  candidates?: SaveCandidate[]; // 1-3, for "similar"
+}
+
+export interface UpdateMemoryToolResult {
+  ok: boolean;
+  filePath?: string;            // updated note path
+  archivePath?: string;         // previous version in .archive/
+  error?: string;               // when ok=false
 }
 
 export interface SearchMemoryToolResult {
@@ -236,31 +334,35 @@ export interface SearchMemoryToolResult {
 
 export interface RetrievalController {
   readonly searched: boolean;
-  /** First user turn returns the context block; later turns return "". */
   onUserTurn(query: string): Promise<string>;
   reset(): void;
 }
 
 export function createRetrievalController(deps: {
-  search: (query: string, topK: number) => Promise<{ filePath: string; score: number }[]>;
-  readNote: (filePath: string) => MemoryNote | undefined; // for short body previews
-  topK?: number;           // default 5
-  previewLength?: number;  // characters per preview, default 200
+  search: (query: string, topK: number, minScore?: number) => Promise<{ filePath: string; score: number }[]>;
+  readNote: (filePath: string) => MemoryNote | undefined;
+  topK?: number;            // default 5
+  previewLength?: number;   // default 200
+  minScore?: number;        // default env SEMANTIC_MEMORY_MIN_SCORE or 0.44
 }): RetrievalController;
 
-/** Testable, Pi-free core. `createMemoryToolCore` depends only on store/search/embed. */
 export interface MemoryToolCoreDeps {
   embedder: Embedder;
-  topK?: number;           // default 5
-  previewLength?: number;  // default 200
+  topK?: number;            // default 5
+  previewLength?: number;   // default 200
+  dupScore?: number;        // default env SEMANTIC_MEMORY_DUP_SCORE or 0.95
+  similarScore?: number;    // default env SEMANTIC_MEMORY_SIMILAR_SCORE or 0.62
+  minScore?: number;        // default env SEMANTIC_MEMORY_MIN_SCORE or 0.44
 }
 
 export interface MemoryToolCore {
-  saveMemory(content: string, tags?: string[]): Promise<SaveMemoryToolResult>;
-  searchMemory(query: string, topK?: number): Promise<SearchResult[]>;
-  /** Best-effort index of queued + changed files; returns counts. */
-  processPending(): Promise<{ indexed: number; failed: number }>;
+  saveMemory(content: string, tags?: string[], allowNew?: boolean): Promise<SaveMemoryToolResult>;
+  updateMemory(filePath: string, content: string, tags?: string[]): Promise<UpdateMemoryToolResult>;
+  searchMemory(query: string, topK?: number, minScore?: number): Promise<SearchResult[]>;
+  processPending(): Promise<{ indexed: number; failed: number; possibleDupes: number }>;
   preflight(): Promise<PreflightResult>;
+  getPossibleDupes(): PossibleDupes;
+  clearPossibleDupes(): void;
 }
 
 export function createMemoryToolCore(deps: MemoryToolCoreDeps): MemoryToolCore;
@@ -271,37 +373,58 @@ export default function semanticMemory(pi: ExtensionAPI): void;
 
 Extension behavior (verified against Pi 1.3.0, see `docs/pi-notes.md`):
 
+Env vars (read at call time; defaults from `docs/decisions.md`):
+
+| Var | Default | Use |
+|---|---|---|
+| `SEMANTIC_MEMORY_DUP_SCORE` | `0.95` | note→note: at/above => duplicate |
+| `SEMANTIC_MEMORY_SIMILAR_SCORE` | `0.62` | note→note: at/above => similar |
+| `SEMANTIC_MEMORY_MIN_SCORE` | `0.44` | query→note: injection floor |
+
 1. **System prompt** — on `before_agent_start`, inject the contents of
    `prompts/memory-instructions.md` (read once at load, resolved relative to the
    extension file) as `event.systemPromptOptions.sections.memory_instructions`.
 2. **Retrieval** — on `session_start`, `retrieval.reset()`. On
-   `before_agent_start` with `messageType === "user"`, call
-   `retrieval.onUserTurn(event.prompt)` once; if it returns a non-empty block,
-   set `event.systemPromptOptions.sections.memory_retrieval = block`. This yields
-   exactly one search per session.
-   - The block lists top paths with short previews (truncated note bodies), and
-     tells the model to open them with the `read` tool.
-3. **Tools** (implemented by `createMemoryToolCore`, wired into `pi.registerTool`)
-   - `save_memory(content: string, tags?: string[])`:
-     `writeMemory(content, tags)` always writes the `.md`. Then attempt
-     `embed(note.content)`. On success `indexNote(note, vector)` and report
-     `indexed: true`. On failure `enqueueForIndexing(note.filePath)` and report
-     `queued: true` with the preflight message.
-   - `search_memory(query: string, topK?: number)`:
-     `search(query, topK ?? 5, embedder, readIndex())`, returns paths + scores.
-4. **Preflight** — on `session_start` (and before any tool that needs
-   embeddings), run `preflight(embedder)`. If not ok, `ctx.ui.notify(message,
-   "warning")` and keep the session alive. `save_memory` still writes + queues.
-5. **Pending indexing** — on `session_start` and after a successful `embed`,
-   process `dequeueAll()` plus `filesNeedingIndex(listMemories(), readIndex())`
-   and `indexNote` each. This is best-effort and must not throw.
+   `before_agent_start` with `messageType === "user"`, `await
+   retrieval.onUserTurn(event.prompt)` once; if non-empty, set
+   `sections.memory_retrieval`. `onUserTurn` searches with `minScore` and returns
+   `""` (no section) when nothing passes the floor.
+3. **`save_memory(content, tags?, allowNew?)`** — inside the index mutex:
+   1. Try `embedder.embed(content)`. On throw → fall back: `writeMemory` +
+      `enqueueForIndexing` and return
+      `{status:"queued", filePath, indexed:false, queued:true}`.
+   2. `top = searchVector(vector, 1, readIndex())[0]`.
+   3. If `top && top.score >= dupScore` → `touchUpdated(top.filePath)` and return
+      `{status:"duplicate", filePath:top.filePath, score, indexed:false, queued:false}`.
+   4. Else if `top && top.score >= similarScore && !allowNew` → return
+      `{status:"similar", score, candidates: top 1-3 (path/score/preview), indexed:false, queued:false}`.
+   5. Else `writeMemory` + `indexNote`, return
+      `{status:"saved", filePath, indexed:true, queued:false}`.
+4. **`update_memory(file_path, content, tags?)`** — `resolveMemoryPath(file_path)`;
+   if `undefined` return `{ok:false, error}`. Else `updateMemory(filePath,
+   content, tags)` (archives first), then `embedder.embed(content)` and
+   `indexNote(note, vector)`; on embed failure `enqueueForIndexing(filePath)` and
+   return `{ok:true, filePath}` with the note queued.
+5. **`search_memory(query, topK?, minScore?)`** — `search(query, topK ?? 5,
+   embedder, readIndex(), {minScore})`; returns paths + scores (scores always
+   included).
+6. **Preflight** — on `session_start` run `preflight(embedder)`; if !ok
+   `ctx.ui.notify(message, "warning")`; never crash. `save_memory` still
+   writes + queues.
+7. **Pending indexing** — on `session_start` and after a successful embed, run
+   `processPending()`. For each queued/changed note: embed, then run the same
+   dedupe check against the index; if near-dup/similar, `recordPossibleDupe(...)`
+   and **do not index/delete/merge** (leave the file on disk); else `indexNote`.
+   Returns `{indexed, failed, possibleDupes}`.
+8. **Possible-dupes notification** — on `session_start`, after `processPending()`,
+   read `getPossibleDupes()`; if non-empty, notify the model once with a one-line
+   summary, then `clearPossibleDupes()`.
 
 The retrieval preview format (used by `createRetrievalController`) is:
 
 ```text
 Relevant long-term memory (open with the `read` tool when needed):
 - /abs/path/note.md (score 0.91): first 200 chars...
-- /abs/path/note2.md (score 0.80): ...
 ```
 
 ---
