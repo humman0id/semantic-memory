@@ -44,6 +44,22 @@ Memory is stored under `~/.pi/agent/memory/`. Notes are `.md` files with
 `id`, `created`, and `tags` frontmatter; the index lives at
 `~/.pi/agent/memory/.index.json`.
 
+## Storage
+
+This extension writes only three things under `~/.pi/agent/memory/`:
+
+- `<uuid>.md` — one note per file, frontmatter `id`/`created`/`tags`
+- `.index.json` — `{filePath, vector, hash}` per indexed note
+- `.queue.json` — note paths awaiting indexing
+
+If another memory extension shares that directory (for example `pi-memory`,
+which writes `MEMORY.md` and `daily/`/`recovery/`), keep them isolated by
+redirecting this one:
+
+```bash
+export SEMANTIC_MEMORY_DIR="$HOME/.pi/agent/semantic-memory"
+```
+
 ## Usage
 
 In a Pi session the model can call two tools:
