@@ -18,10 +18,6 @@ cosine similarity.
 ## Install
 
 ```bash
-# local path
-pi install "$PWD"
-
-# from git
 pi install git:github.com/humman0id/semantic-memory
 ```
 
