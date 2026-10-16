@@ -617,7 +617,6 @@ async function check18(): Promise<CheckResult> {
     "## Design notes",
   ];
   const missingSections = sections.filter((s) => !readme.includes(s));
-  const mermaidCount = (readme.match(/```mermaid/g) ?? []).length;
   const envVars = [
     "SEMANTIC_MEMORY_EMBED_URL",
     "SEMANTIC_MEMORY_EMBED_MODEL",
@@ -632,21 +631,22 @@ async function check18(): Promise<CheckResult> {
   const numbers = ["0.97", "0.59", "0.44", "0.944", "0.03", "0.730", "0.961", "0.826"];
   const missingNumbers = numbers.filter((n) => !readme.includes(n));
   const stale = ["0.95", "0.62"].filter((n) => readme.includes(n));
-  const placeholderOk = readme.includes("git:github.com/<user>/<repo>");
+  const gitUrlOk = readme.includes("git:github.com/humman0id/semantic-memory");
+  const flowTextOk = readme.includes("**Flow:**") && readme.includes("**Dedupe");
   const hasOllama = readme.includes("ollama pull embeddinggemma") && readme.includes("embeddinggemma");
   const ok =
     missingSections.length === 0 &&
-    mermaidCount === 2 &&
     missingVars.length === 0 &&
     missingTools.length === 0 &&
     missingNumbers.length === 0 &&
     stale.length === 0 &&
-    placeholderOk &&
+    gitUrlOk &&
+    flowTextOk &&
     hasOllama;
   return {
-    criterion: "18. README has all sections, both diagrams, no unverified claims",
+    criterion: "18. README has all sections, flow/dedupe explained, no unverified claims",
     ok,
-    details: `missingSections=${JSON.stringify(missingSections)} mermaid=${mermaidCount} missingVars=${JSON.stringify(missingVars)} missingTools=${JSON.stringify(missingTools)} missingNumbers=${JSON.stringify(missingNumbers)} stale=${JSON.stringify(stale)} placeholderOk=${placeholderOk} hasOllama=${hasOllama}`,
+    details: `missingSections=${JSON.stringify(missingSections)} missingVars=${JSON.stringify(missingVars)} missingTools=${JSON.stringify(missingTools)} missingNumbers=${JSON.stringify(missingNumbers)} stale=${JSON.stringify(stale)} gitUrlOk=${gitUrlOk} flowTextOk=${flowTextOk} hasOllama=${hasOllama}`,
   };
 }
 

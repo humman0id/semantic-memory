@@ -1,5 +1,7 @@
 # semantic-memory
 
+[![CI](https://github.com/humman0id/semantic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/humman0id/semantic-memory)
+
 A long-term memory for the [Pi coding agent](https://pi.dev): durable Markdown
 notes, embedded locally with `embeddinggemma` through Ollama, and found by
 cosine similarity.
@@ -19,8 +21,8 @@ cosine similarity.
 # local path
 pi install "$PWD"
 
-# from git (replace <user>/<repo> with the actual repo)
-pi install git:github.com/<user>/<repo>
+# from git
+pi install git:github.com/humman0id/semantic-memory
 ```
 
 ## Configure
@@ -53,34 +55,27 @@ Three tools are registered:
   keeping `id`/`created`, setting `updated`, and archiving the previous version
   to `.archive/`.
 
-```mermaid
-flowchart TD
-    S[Session start] --> F{First user message?}
-    F -- yes --> E[Embed the message]
-    E --> X[Search index once]
-    X --> I[Inject top paths + previews into context]
-    I --> R[Model opens notes with Pi's built-in read tool]
+**Flow:**
 
-    SM[save_memory] --> W[Write .md note]
-    W --> IDX[Embed + update .index.json]
+- **Session start** → on the first user message, embed the message, search the
+  index once, and inject the top matching paths (with previews) into context;
+  the model opens the full notes with Pi's built-in `read` tool.
+- **`save_memory`** → write a `.md` note, embed it, and update `.index.json`.
+- **Ollama down** → `save_memory` writes the note and queues it; it is indexed
+  later once the endpoint returns.
 
-    OD[Ollama down] --> Q[save_memory writes .md + queues]
-    Q --> LI[Indexed later when the endpoint returns]
-```
+**Dedupe (`save_memory`):**
 
-```mermaid
-flowchart TD
-    A[save_memory content] --> B{Embedding endpoint up?}
-    B -- no --> C[Write .md + queue]
-    C --> D[Later: similar notes flagged in .possible-dupes.json, never auto-deleted]
-    B -- yes --> E[Embed and compare against index]
-    E --> F{score >= DUP_SCORE?}
-    F -- yes --> G[Return existing note: path + preview, write nothing]
-    F -- no --> H{score >= SIMILAR_SCORE?}
-    H -- yes --> I[Return candidate notes]
-    I --> J[Model chooses: update_memory or allowNew true]
-    H -- no --> K[Write .md + index]
-```
+1. Embed the content and compare it against the index.
+2. Top score ≥ `DUP_SCORE` (0.97) → return the existing note (path + preview),
+   write nothing.
+3. Else top score ≥ `SIMILAR_SCORE` (0.59) → return candidate notes; the model
+   chooses `update_memory` or `save_memory(..., allowNew: true)`.
+4. Else → write the note and index it.
+
+If embeddings are unavailable, `save_memory` writes the note and queues it; a
+queued note that later looks similar is flagged in `.possible-dupes.json` and
+never auto-deleted.
 
 ## Usage
 
