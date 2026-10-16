@@ -40,3 +40,4 @@ search_memory(query="code formatting preference", topK=5)
 On the first user message of a session, the extension searches once and injects
 the top matching note paths (with short previews) into context. The model opens
 full notes with the built-in `read` tool.
+# semantic-memory
